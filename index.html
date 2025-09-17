@@ -165,53 +165,27 @@
                 currentReferenzNumbers = [];
 
                 for (const line of lines) {
-                    const amountRegex = /(\d{1,3}(?:\.\d{3})*,\d{2})\s*(-?)\s*$/;
-                    const amountMatch = line.match(amountRegex);
+                    // *** VEREINFACHTE UND ROBUSTERE LOGIK ***
+                    // Regex, um die ganze Zeile in Teile zu zerlegen: Beleg-Nr, Referenz (kann alles sein), Datum, Abzüge, Betrag
+                    const lineRegex = /^(\d{10})\s+(.+?)\s+(\d{2}\.\d{2}\.\d{2,4})\s+(\d{1,3}(?:[.,]\d{3})*,\d{2})\s+(\d{1,3}(?:[.,]\d{3})*,\d{2})(-?)$/;
+                    const match = line.match(lineRegex);
 
-                    if (amountMatch) {
-                        let amountStr = amountMatch[1];
-                        if (amountMatch[2] === '-') amountStr += '-';
+                    if (match) {
+                        // Der 2. Teil (.+?) ist IMMER die Referenznummer, egal was darin steht
+                        let fullReference = match[2].trim();
+                        const amountStrWithSign = match[5] + match[6];
                         
-                        const searchArea = line.substring(0, amountMatch.index);
-                        const tokens = searchArea.trim().split(/\s+/);
-                        let referenzNumbers = [];
+                        // Bereinige die "1....." Nummern, falls sie vorkommen
+                        const prefixDotMatch = fullReference.match(/^\d\.\.\.\.\.(.+)$/);
+                        if (prefixDotMatch) {
+                            fullReference = prefixDotMatch[1];
+                        }
                         
-                        const guRegex = /GU-([0-9-]{6,})/g;
-                        let guMatch;
-                        while ((guMatch = guRegex.exec(searchArea)) !== null) {
-                            referenzNumbers.push('GU-' + guMatch[1]);
-                        }
-
-                        const otherRefNumbers = tokens.filter(token =>
-                            token.length >= 4 && /\d/.test(token) &&
-                            !/^(45|78)\d{8}$/.test(token) &&
-                            !/^\d{2}\.\d{2}\.\d{2,4}$/.test(token) &&
-                            !/^\d{1,3}(?:\.\d{3})*,\d{2}$/.test(token) &&
-                            !/^7[58]00\d{6}$/.test(token) && !/^\d+\.$/.test(token) &&
-                            token.toLowerCase() !== 'gesamt' && token.toLowerCase() !== 'summe' &&
-                            !/^([1-9]\.|\d+\.\d+).*$/.test(token) &&
-                            (/^\d+$/.test(token) || /^\d+\/\d+$/.test(token) || /^GU-\d+$/.test(token))
-                        );
-
-                        otherRefNumbers.forEach(ref => { if (!referenzNumbers.includes(ref)) referenzNumbers.push(ref); });
-
-                        if (searchArea.includes("REKLA-ID")) {
-                            const reklaIdMatch = searchArea.match(/REKLA-ID:\s*(\d{7,})/i);
-                            if (reklaIdMatch && !referenzNumbers.includes(reklaIdMatch[1])) referenzNumbers.push(reklaIdMatch[1]);
-                        }
-                        if (searchArea.includes("PRAEMIE:") && searchArea.includes("ABRECHNUNG")) {
-                            const praemieMatch = searchArea.match(/ABRECHNUNG\s*\d{2}\/\d{4}\s*(\d{7,})/i);
-                            if (praemieMatch && !referenzNumbers.includes(praemieMatch[1])) referenzNumbers.push(praemieMatch[1]);
-                        }
-
-                        referenzNumbers = [...new Set(referenzNumbers)];
-
-                        if (referenzNumbers.length > 0) {
-                            referenzNumbers.forEach(refNum => {
-                                foundRows.push({ ref: refNum, amount: amountStr });
-                                currentReferenzNumbers.push(refNum);
-                            });
-                        }
+                        foundRows.push({
+                            ref: fullReference,
+                            amount: amountStrWithSign.replace('.', '').replace(',', '.') // Für die Berechnung normalisieren
+                        });
+                        currentReferenzNumbers.push(fullReference);
                     }
                 }
 
@@ -233,13 +207,13 @@
                     let rowIndex = 1;
                     for (const row of foundRows) {
                         let displayAmountHtml;
-                        let cleanedAmount = row.amount.replace(/\./g, '').replace(',', '.');
-                        if (cleanedAmount.endsWith('-')) cleanedAmount = '-' + cleanedAmount.slice(0, -1);
-                        const numericAmount = parseFloat(cleanedAmount);
-                        if (row.amount.endsWith('-')) {
-                            displayAmountHtml = `<span class="sign minus">-</span> ${row.amount.slice(0, -1)}`;
+                        const numericAmount = parseFloat(row.amount.endsWith('-') ? '-' + row.amount.slice(0, -1) : row.amount);
+                        const displayAmount = Math.abs(numericAmount).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        
+                        if (numericAmount < 0) {
+                            displayAmountHtml = `<span class="sign minus">-</span> ${displayAmount}`;
                         } else {
-                            displayAmountHtml = `<span class="sign plus">+</span> ${row.amount}`;
+                            displayAmountHtml = `<span class="sign plus">+</span> ${displayAmount}`;
                         }
                         totalSum += numericAmount;
 
