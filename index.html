@@ -165,26 +165,40 @@
                 currentReferenzNumbers = [];
 
                 for (const line of lines) {
-                    // *** VEREINFACHTE UND ROBUSTERE LOGIK ***
-                    // Regex, um die ganze Zeile in Teile zu zerlegen: Beleg-Nr, Referenz (kann alles sein), Datum, Abzüge, Betrag
-                    const lineRegex = /^(\d{10})\s+(.+?)\s+(\d{2}\.\d{2}\.\d{2,4})\s+(\d{1,3}(?:[.,]\d{3})*,\d{2})\s+(\d{1,3}(?:[.,]\d{3})*,\d{2})(-?)$/;
-                    const match = line.match(lineRegex);
+                    const trimmedLine = line.trim();
 
-                    if (match) {
-                        // Der 2. Teil (.+?) ist IMMER die Referenznummer, egal was darin steht
-                        let fullReference = match[2].trim();
-                        const amountStrWithSign = match[5] + match[6];
+                    // ANKER 1: Finde einen Betrag am Ende der Zeile.
+                    const amountRegex = /(\d{1,3}(?:[.,]\d{3})*,\d{2})(-?)\s*$/;
+                    const amountMatch = trimmedLine.match(amountRegex);
+                    if (!amountMatch) continue;
+
+                    const contentBeforeAmount = trimmedLine.substring(0, amountMatch.index);
+
+                    // ANKER 2: Finde eine 10-stellige Belegnummer am ANFANG.
+                    const belegRegex = /^(\d{10})\s+/;
+                    const belegMatch = contentBeforeAmount.match(belegRegex);
+                    if (!belegMatch) continue;
+
+                    // ANKER 3: Finde ein Datum in der Mitte.
+                    const dateRegex = /(\d{2}\.\d{2}\.\d{2,4})/;
+                    const dateMatch = contentBeforeAmount.match(dateRegex);
+                    if (!dateMatch) continue;
+                    
+                    // DIE LOGIK: Referenz ist ALLES zwischen Belegnummer und Datum.
+                    const refStartIndex = belegMatch[0].length;
+                    const refEndIndex = dateMatch.index;
+                    let fullReference = contentBeforeAmount.substring(refStartIndex, refEndIndex).trim();
+
+                    if (fullReference) {
+                        const amountWithSign = amountMatch[1] + amountMatch[2];
                         
-                        // Bereinige die "1....." Nummern, falls sie vorkommen
+                        // Bereinige optional die "....." Nummern.
                         const prefixDotMatch = fullReference.match(/^\d\.\.\.\.\.(.+)$/);
                         if (prefixDotMatch) {
-                            fullReference = prefixDotMatch[1];
+                            fullReference = prefixDotMatch[1].trim();
                         }
-                        
-                        foundRows.push({
-                            ref: fullReference,
-                            amount: amountStrWithSign.replace('.', '').replace(',', '.') // Für die Berechnung normalisieren
-                        });
+
+                        foundRows.push({ ref: fullReference, amount: amountWithSign });
                         currentReferenzNumbers.push(fullReference);
                     }
                 }
@@ -207,7 +221,12 @@
                     let rowIndex = 1;
                     for (const row of foundRows) {
                         let displayAmountHtml;
-                        const numericAmount = parseFloat(row.amount.endsWith('-') ? '-' + row.amount.slice(0, -1) : row.amount);
+                        let cleanedAmount = row.amount.replace(/\./g, '').replace(',', '.');
+                        if (cleanedAmount.endsWith('-')) {
+                            cleanedAmount = '-' + cleanedAmount.slice(0, -1);
+                        }
+                        const numericAmount = parseFloat(cleanedAmount);
+
                         const displayAmount = Math.abs(numericAmount).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                         
                         if (numericAmount < 0) {
