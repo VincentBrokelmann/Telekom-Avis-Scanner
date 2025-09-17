@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Telekom Avis-Scanner</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+        .container { background-color: white; padding: 30px 40px; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.1); text-align: center; max-width: 900px; width: 100%; }
+        h1 { color: #d60079; }
+        p { color: #606770; line-height: 1.5; }
+        .upload-area { border: 3px dashed #ced4da; border-radius: 12px; padding: 40px; cursor: pointer; transition: all 0.3s ease; background-color: #f8f9fa; }
+        .upload-area.is-dragover { border-color: #d60079; background-color: #fdeaf4; }
+        input[type="file"] { display: none; }
+        #status-text { margin-top: 20px; font-style: italic; color: #5f6368; height: 20px; }
+        .output-container { margin-top: 25px; text-align: left; }
+        .result-highlight { background-color: #e9f5ff; border: 2px solid #007bff; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .result-highlight strong { font-size: 1.2em; color: #0056b3; }
+        .result-highlight span { font-family: "Courier New", Courier, monospace; background-color: #fff; padding: 8px 12px; border-radius: 4px; font-weight: bold; font-size: 1.3em; color: #d93025; }
+        #results-table-container h2 { font-size: 18px; text-align: center; margin-bottom: 15px; }
+        .results-table { width: 100%; border-collapse: collapse; }
+        .results-table th, .results-table td { border: 1px solid #dee2e6; padding: 12px; text-align: left; font-family: "Courier New", Courier, monospace; vertical-align: middle; }
+        .results-table th { background-color: #f1f3f5; font-family: sans-serif; font-weight: bold; }
+        .results-table tr:nth-child(even) { background-color: #f8f9fa; }
+        .results-table td:last-child { text-align: right; }
+        .sign { font-weight: bold; margin-right: 8px; font-size: 1.1em; }
+        .sign.plus { color: #28a745; }
+        .sign.minus { color: #dc3545; }
+        .copy-button-container { display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px; margin-bottom: 10px; }
+        .copy-button { background-color: #d60079; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 0.9em; font-weight: bold; transition: background-color 0.3s ease; }
+        .copy-button:hover { background-color: #a3005d; }
+        .total-sum-container { margin-top: 25px; padding: 15px 20px; background-color: #f0f8ff; border: 2px solid #a3d9ff; border-radius: 8px; text-align: right; font-size: 1.2em; font-weight: bold; color: #0056b3; }
+        .total-sum-container span { color: #d60079; font-size: 1.3em; margin-left: 10px; }
+        .results-table tbody tr { transition: background-color 0.2s ease; }
+        .mark-cell { cursor: pointer; text-align: center; font-size: 1.2em; width: 50px; }
+        .highlighted-row { background-color: #ffe0e0 !important; }
+        .row-number-cell { text-align: center; width: 40px; font-family: sans-serif; color: #606770; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Telekom Avis-Scanner</h1>
+        <p>Listet nur Positionen, die eine Referenznummer und einen Bruttobetrag in derselben Zeile haben.</p>
+
+        <div id="upload-area" class="upload-area">
+            <input type="file" id="file-input" accept=".pdf,.txt">
+            <div>📄</div>
+            <div>Datei hierher ziehen oder klicken</div>
+        </div>
+        
+        <div id="status-text">Warte auf Datei...</div>
+
+        <div class="output-container">
+            <div class="result-highlight">
+                <strong>Belegnummer:</strong>
+                <span id="belegnummer-output">...</span>
+            </div>
+            
+            <div id="copy-all-refs-container" class="copy-button-container" style="display: none;">
+                <button id="copy-chunk-button" class="copy-button">Nächste 6 kopieren</button>
+                <button id="copy-all-refs-button" class="copy-button">Alle kopieren</button>
+            </div>
+
+            <div id="results-table-container"></div>
+
+            <div id="total-sum-display" class="total-sum-container" style="display: none;">
+                Gesamtsumme der erkannten Posten: <span id="calculated-total-sum">0,00</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', initialize);
+
+        function initialize() {
+            if (typeof pdfjsLib === 'undefined') {
+                console.error("PDF.js library not loaded.");
+                return;
+            }
+            pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js`;
+
+            const uploadArea = document.getElementById('upload-area');
+            const fileInput = document.getElementById('file-input');
+            const statusText = document.getElementById('status-text');
+            const belegnummerOutput = document.getElementById('belegnummer-output');
+            const resultsTableContainer = document.getElementById('results-table-container');
+            const copyAllRefsButton = document.getElementById('copy-all-refs-button');
+            const copyChunkButton = document.getElementById('copy-chunk-button');
+            const copyAllRefsContainer = document.getElementById('copy-all-refs-container');
+            const totalSumDisplay = document.getElementById('total-sum-display');
+            const calculatedTotalSum = document.getElementById('calculated-total-sum');
+
+            let currentReferenzNumbers = [];
+            let chunkCopyIndex = 0;
+
+            uploadArea.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', () => { if (fileInput.files.length > 0) handleFile(fileInput.files[0]); });
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => uploadArea.addEventListener(e, p => { p.preventDefault(); p.stopPropagation(); }, false));
+            ['dragenter', 'dragover'].forEach(e => uploadArea.addEventListener(e, () => uploadArea.classList.add('is-dragover'), false));
+            ['dragleave', 'drop'].forEach(e => uploadArea.addEventListener(e, () => uploadArea.classList.remove('is-dragover'), false));
+            uploadArea.addEventListener('drop', (event) => handleFile(event.dataTransfer.files[0]), false);
+
+            copyAllRefsButton.addEventListener('click', copyAllReferenzNumbers);
+            copyChunkButton.addEventListener('click', copyChunkOfReferenzNumbers);
+
+            async function handleFile(file) {
+                if (!file) return;
+                statusText.textContent = `Verarbeite "${file.name}"...`;
+                belegnummerOutput.textContent = '...';
+                resultsTableContainer.innerHTML = '<h2>Positionen</h2><p style="text-align:center;">Analysiere Dokument...</p>';
+                copyAllRefsContainer.style.display = 'none';
+                totalSumDisplay.style.display = 'none';
+                currentReferenzNumbers = [];
+                chunkCopyIndex = 0;
+
+                try {
+                    const lines = await extractTextLines(file);
+                    findAndDisplayData(lines);
+                } catch (error) {
+                    statusText.textContent = 'Ein Fehler ist aufgetreten.';
+                    console.error(error);
+                } finally {
+                    statusText.textContent = `Analyse für "${file.name}" abgeschlossen.`;
+                }
+            }
+
+            async function extractTextLines(file) {
+                if (file.type !== "application/pdf") {
+                    const rawText = await file.text();
+                    return rawText.split('\n');
+                }
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                const textLines = [];
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const content = await page.getTextContent();
+                    let lastY = -1;
+                    let currentLine = '';
+                    const items = content.items.sort((a, b) => (a.transform[5] === b.transform[5]) ? a.transform[4] - b.transform[4] : b.transform[5] - a.transform[5]);
+                    for (const item of items) {
+                        if (item.width > 0 && item.height > 0 && item.str.trim() !== '') {
+                            if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > (item.height * 0.5)) { 
+                                if (currentLine.trim() !== '') textLines.push(currentLine.trim());
+                                currentLine = '';
+                            }
+                            currentLine += item.str + ' ';
+                            lastY = item.transform[5];
+                        }
+                    }
+                    if (currentLine.trim() !== '') textLines.push(currentLine.trim());
+                }
+                return textLines;
+            }
+
+            function findAndDisplayData(lines) {
+                const fullText = lines.join(' ');
+                const belegnummerRegex = /(?:Beleg\s*\/\s*Datum|Belegnummer|Nr\.)\s*(\d{7,})/i;
+                const belegMatch = fullText.match(belegnummerRegex);
+                belegnummerOutput.textContent = belegMatch ? belegMatch[1] : 'Nicht gefunden';
+
+                let tableHtml = '<h2>Positionen</h2><p style="text-align:center;">Keine Positionen mit Bruttobetrag gefunden.</p>';
+                let foundRows = [];
+                currentReferenzNumbers = [];
+
+                for (const line of lines) {
+                    const amountRegex = /(\d{1,3}(?:\.\d{3})*,\d{2})\s*(-?)\s*$/;
+                    const amountMatch = line.match(amountRegex);
+
+                    if (amountMatch) {
+                        let amountStr = amountMatch[1];
+                        if (amountMatch[2] === '-') amountStr += '-';
+                        
+                        const searchArea = line.substring(0, amountMatch.index);
+                        const tokens = searchArea.trim().split(/\s+/);
+                        let referenzNumbers = [];
+                        
+                        const guRegex = /GU-([0-9-]{6,})/g;
+                        let guMatch;
+                        while ((guMatch = guRegex.exec(searchArea)) !== null) {
+                            referenzNumbers.push('GU-' + guMatch[1]);
+                        }
+
+                        const otherRefNumbers = tokens.filter(token =>
+                            token.length >= 4 && /\d/.test(token) &&
+                            !/^(45|78)\d{8}$/.test(token) &&
+                            !/^\d{2}\.\d{2}\.\d{2,4}$/.test(token) &&
+                            !/^\d{1,3}(?:\.\d{3})*,\d{2}$/.test(token) &&
+                            !/^7[58]00\d{6}$/.test(token) && !/^\d+\.$/.test(token) &&
+                            token.toLowerCase() !== 'gesamt' && token.toLowerCase() !== 'summe' &&
+                            !/^([1-9]\.|\d+\.\d+).*$/.test(token) &&
+                            (/^\d+$/.test(token) || /^\d+\/\d+$/.test(token) || /^GU-\d+$/.test(token))
+                        );
+
+                        otherRefNumbers.forEach(ref => { if (!referenzNumbers.includes(ref)) referenzNumbers.push(ref); });
+
+                        if (searchArea.includes("REKLA-ID")) {
+                            const reklaIdMatch = searchArea.match(/REKLA-ID:\s*(\d{7,})/i);
+                            if (reklaIdMatch && !referenzNumbers.includes(reklaIdMatch[1])) referenzNumbers.push(reklaIdMatch[1]);
+                        }
+                        if (searchArea.includes("PRAEMIE:") && searchArea.includes("ABRECHNUNG")) {
+                            const praemieMatch = searchArea.match(/ABRECHNUNG\s*\d{2}\/\d{4}\s*(\d{7,})/i);
+                            if (praemieMatch && !referenzNumbers.includes(praemieMatch[1])) referenzNumbers.push(praemieMatch[1]);
+                        }
+
+                        referenzNumbers = [...new Set(referenzNumbers)];
+
+                        if (referenzNumbers.length > 0) {
+                            referenzNumbers.forEach(refNum => {
+                                foundRows.push({ ref: refNum, amount: amountStr });
+                                currentReferenzNumbers.push(refNum);
+                            });
+                        }
+                    }
+                }
+
+                if (foundRows.length > 0) {
+                    tableHtml = `
+                        <h2>Positionen</h2>
+                        <table class="results-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px;">Nr.</th>
+                                    <th>Referenznummer</th>
+                                    <th>Bruttobetrag</th>
+                                    <th style="text-align: center;">Mark.</th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
+
+                    let totalSum = 0;
+                    let rowIndex = 1;
+                    for (const row of foundRows) {
+                        let displayAmountHtml;
+                        let cleanedAmount = row.amount.replace(/\./g, '').replace(',', '.');
+                        if (cleanedAmount.endsWith('-')) cleanedAmount = '-' + cleanedAmount.slice(0, -1);
+                        const numericAmount = parseFloat(cleanedAmount);
+                        if (row.amount.endsWith('-')) {
+                            displayAmountHtml = `<span class="sign minus">-</span> ${row.amount.slice(0, -1)}`;
+                        } else {
+                            displayAmountHtml = `<span class="sign plus">+</span> ${row.amount}`;
+                        }
+                        totalSum += numericAmount;
+
+                        tableHtml += `
+                            <tr>
+                                <td class="row-number-cell">${rowIndex}</td>
+                                <td>${row.ref}</td>
+                                <td>${displayAmountHtml}</td>
+                                <td class="mark-cell">🚩</td>
+                            </tr>`;
+                        rowIndex++;
+                    }
+                    tableHtml += `</tbody></table>`;
+                    copyAllRefsContainer.style.display = 'flex';
+                    totalSumDisplay.style.display = 'block';
+                    calculatedTotalSum.textContent = formatCurrency(totalSum);
+                } else {
+                    copyAllRefsContainer.style.display = 'none';
+                    totalSumDisplay.style.display = 'none';
+                }
+                resultsTableContainer.innerHTML = tableHtml;
+                attachRowHighlightEvents();
+            }
+
+            function attachRowHighlightEvents() {
+                const markCells = document.querySelectorAll('.mark-cell');
+                markCells.forEach(cell => {
+                    cell.addEventListener('click', () => {
+                        cell.parentElement.classList.toggle('highlighted-row');
+                    });
+                });
+            }
+
+            function copyChunkOfReferenzNumbers() {
+                if (currentReferenzNumbers.length === 0) {
+                    alert('Keine Referenznummern zum Kopieren gefunden.');
+                    return;
+                }
+                const chunkSize = 6;
+                const totalRefs = currentReferenzNumbers.length;
+                if (chunkCopyIndex >= totalRefs) {
+                    chunkCopyIndex = 0;
+                    alert('Alle Referenznummern wurden kopiert. Beginne wieder von vorne.');
+                }
+                const startIndex = chunkCopyIndex;
+                const endIndex = Math.min(startIndex + chunkSize, totalRefs);
+                const chunkToCopy = currentReferenzNumbers.slice(startIndex, endIndex);
+                const textToCopy = chunkToCopy.join('\n');
+                navigator.clipboard.writeText(textToCopy)
+                    .then(() => {
+                        alert(`Kopiert: Referenznummern ${startIndex + 1} bis ${endIndex} von insgesamt ${totalRefs}.`);
+                        chunkCopyIndex = endIndex;
+                    })
+                    .catch(err => {
+                        console.error('Fehler beim Kopieren des Blocks: ', err);
+                        alert('Kopieren fehlgeschlagen.');
+                    });
+            }
+
+            function copyAllReferenzNumbers() {
+                if (currentReferenzNumbers.length > 0) {
+                    const textToCopy = currentReferenzNumbers.join('\n');
+                    navigator.clipboard.writeText(textToCopy)
+                        .then(() => alert('Alle ' + currentReferenzNumbers.length + ' Referenznummern in die Zwischenablage kopiert!'))
+                        .catch(err => {
+                            console.error('Fehler beim Kopieren der Referenznummern: ', err);
+                            alert('Kopieren fehlgeschlagen. Bitte manuell kopieren.');
+                        });
+                } else {
+                    alert('Keine Referenznummern zum Kopieren gefunden.');
+                }
+            }
+
+            function formatCurrency(amount) {
+                return amount.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            }
+        }
+    </script>
+</body>
+</html>
